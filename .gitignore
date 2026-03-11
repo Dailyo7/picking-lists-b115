@@ -1,0 +1,24 @@
+# Secrets — ne jamais committer
+.streamlit/secrets.toml
+*.json.key
+credentials*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+
+# Fichiers générés localement
+*.log
+picking_lists/
+powerpoints_updated/
+picking_lists_archive/
+stock_cache.xlsx
+main.xlsx
+last_import.json
+pl_counter.json
+po_numbers.json
+archive_index.json

@@ -1,0 +1,11 @@
+credentials:
+  usernames:
+    valentin:
+      email: valentin@siemensgamesa.com
+      name: Valentin
+      password: $2b$12$4xeBInVaI8x8nxyUHFh6/ea5jCZ0pAdYH06Hqvr95Q7huusy979MW  # changeme123
+
+cookie:
+  expiry_days: 30
+  key: picking_lists_b115_secret_key_change_me
+  name: picking_lists_auth
