@@ -11,6 +11,8 @@ from google.oauth2 import service_account
 SCOPES = ['https://www.googleapis.com/auth/drive']
 FOLDER_NAME = 'Picking List Generator'
 
+_LIST_KWARGS = dict(includeItemsFromAllDrives=True, supportsAllDrives=True)
+
 
 @st.cache_resource
 def get_service():
@@ -26,6 +28,7 @@ def get_folder_id(folder_name=FOLDER_NAME):
     results = service.files().list(
         q=f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
         fields='files(id, name)',
+        **_LIST_KWARGS,
     ).execute()
     files = results.get('files', [])
     if not files:
@@ -42,6 +45,7 @@ def get_subfolder_id(subfolder_name, parent_folder_id=None):
         q=(f"name='{subfolder_name}' and mimeType='application/vnd.google-apps.folder' "
            f"and '{parent_folder_id}' in parents and trashed=false"),
         fields='files(id)',
+        **_LIST_KWARGS,
     ).execute()
     files = results.get('files', [])
     if files:
@@ -52,7 +56,7 @@ def get_subfolder_id(subfolder_name, parent_folder_id=None):
         'mimeType': 'application/vnd.google-apps.folder',
         'parents': [parent_folder_id],
     }
-    folder = service.files().create(body=meta, fields='id').execute()
+    folder = service.files().create(body=meta, fields='id', supportsAllDrives=True).execute()
     return folder['id']
 
 
@@ -64,6 +68,7 @@ def download_file(file_name, folder_id=None) -> bytes | None:
     results = service.files().list(
         q=f"name='{file_name}' and '{folder_id}' in parents and trashed=false",
         fields='files(id, name)',
+        **_LIST_KWARGS,
     ).execute()
     files = results.get('files', [])
     if not files:
@@ -91,16 +96,17 @@ def upload_file(file_bytes: bytes, file_name: str, folder_id=None) -> str:
     results = service.files().list(
         q=f"name='{file_name}' and '{folder_id}' in parents and trashed=false",
         fields='files(id)',
+        **_LIST_KWARGS,
     ).execute()
     existing = results.get('files', [])
 
     if existing:
         file_id = existing[0]['id']
-        service.files().update(fileId=file_id, media_body=media).execute()
+        service.files().update(fileId=file_id, media_body=media, supportsAllDrives=True).execute()
         return file_id
     else:
         meta = {'name': file_name, 'parents': [folder_id]}
-        f = service.files().create(body=meta, media_body=media, fields='id').execute()
+        f = service.files().create(body=meta, media_body=media, fields='id', supportsAllDrives=True).execute()
         return f['id']
 
 
@@ -116,6 +122,7 @@ def list_files(folder_id=None, pattern=None) -> list[dict]:
         q=q,
         fields='files(id, name, modifiedTime, size)',
         orderBy='modifiedTime desc',
+        **_LIST_KWARGS,
     ).execute()
     return results.get('files', [])
 
