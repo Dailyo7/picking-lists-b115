@@ -85,7 +85,7 @@ def upload_file(file_bytes: bytes, file_name: str, folder_id=None) -> str:
         folder_id = get_folder_id()
 
     mime = _guess_mime(file_name)
-    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime, resumable=True)
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime, resumable=False)
 
     # Chercher si le fichier existe déjà
     results = service.files().list(
