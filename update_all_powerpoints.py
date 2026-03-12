@@ -242,7 +242,7 @@ def main(po_numbers=None, shared_dir=None):
 
     # Traiter chaque PowerPoint
     for pptx_filename, component_name in PPTX_TO_COMPONENT.items():
-        pptx_path = Path('sources') / pptx_filename  # sources reste local
+        pptx_path = base / 'sources' / pptx_filename
 
         if not pptx_path.exists():
             print(f"⚠️  {pptx_filename} - NON TROUVÉ (ignoré)")
