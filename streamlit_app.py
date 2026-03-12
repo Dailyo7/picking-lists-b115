@@ -244,16 +244,45 @@ def _show_admin_panel():
     st.markdown('**Comptes actifs**')
     cfg = load_auth()
     users = cfg['credentials']['usernames']
+    current_user = st.session_state.get('username', '')
     if users:
         for uname, udata in users.items():
-            role = udata.get('role', 'user')
+            role  = udata.get('role', 'user')
             badge = '🔑' if role == 'admin' else '👤'
             st.markdown(
                 f'<div class="admin-row">{badge} <strong>{uname}</strong> — {udata.get("name","?")}'
                 f'<span style="color:#888;font-size:0.72rem;float:right">{role}</span></div>',
                 unsafe_allow_html=True,
             )
-        st.caption('Les mots de passe sont hashés (bcrypt) — non récupérables.')
+            ca, cb, cc = st.columns([2, 2, 1])
+            with ca:
+                with st.popover('🔑 Réinitialiser MDP', use_container_width=True):
+                    new_pwd = st.text_input('Nouveau mot de passe', type='password',
+                                            key=f'newpwd_{uname}')
+                    if st.button('Valider', key=f'resetpwd_{uname}', type='primary'):
+                        ok, msg = auth_utils.reset_password(uname, new_pwd)
+                        if ok:
+                            st.success(msg)
+                            st.session_state.pop('_authenticator', None)
+                        else:
+                            st.error(msg)
+            with cb:
+                # Impossible de supprimer son propre compte
+                if uname != current_user:
+                    arm_key = f'arm_del_{uname}'
+                    if st.session_state.get(arm_key):
+                        if st.button(f'⚠️ Confirmer suppression', key=f'confirm_del_{uname}',
+                                     use_container_width=True):
+                            if auth_utils.delete_user(uname):
+                                st.session_state.pop(arm_key, None)
+                                st.session_state.pop('_authenticator', None)
+                                st.rerun()
+                    else:
+                        if st.button('🗑 Supprimer', key=f'del_user_{uname}',
+                                     use_container_width=True):
+                            st.session_state[arm_key] = True
+                            st.rerun()
+        st.caption('Mots de passe hashés (bcrypt) — non récupérables en clair.')
     else:
         st.caption('Aucun compte.')
 
@@ -473,7 +502,11 @@ def step_generate_picking():
                 if not selected:
                     st.warning('Sélectionnez au moins un composant.')
                 else:
-                    _do_generate_picking(selected, po_numbers, print_pdf)
+                    ok = _do_generate_picking(selected, po_numbers, print_pdf, _rerun=False)
+                    if ok:
+                        _do_update_pptx(print_pdf, _rerun=True)
+                    else:
+                        st.rerun()
         if 'generated_picking_files' in st.session_state:
             st.divider()
             st.markdown('**Fichiers générés**')
@@ -1000,31 +1033,43 @@ def step_files_browser():
             st.caption('Aucun fichier généré pour l\'instant.')
             return
 
+        xlsx_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        pptx_mime = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+
+        def _file_row(f, folder_id, mime, key_prefix):
+            fbytes = drive.download_file(f['name'], folder_id)
+            c1, c2 = st.columns([5, 1])
+            with c1:
+                if fbytes:
+                    st.download_button(
+                        f'⬇ {f["name"]}', data=fbytes, file_name=f['name'], mime=mime,
+                        key=f'{key_prefix}_dl_{f["name"]}', use_container_width=True,
+                    )
+                else:
+                    st.caption(f['name'])
+            with c2:
+                arm = f'arm_del_file_{f["name"]}'
+                if st.session_state.get(arm):
+                    if st.button('✓', key=f'{key_prefix}_ok_{f["name"]}',
+                                 help='Confirmer la suppression', use_container_width=True):
+                        drive.delete_file(f['name'], folder_id)
+                        st.session_state.pop(arm, None)
+                        st.rerun()
+                else:
+                    if st.button('🗑', key=f'{key_prefix}_del_{f["name"]}',
+                                 help='Supprimer', use_container_width=True):
+                        st.session_state[arm] = True
+                        st.rerun()
+
         if pl_files:
             st.markdown('**Picking Lists**')
-            cols = st.columns(min(len(pl_files), 3))
-            for i, f in enumerate(pl_files):
-                with cols[i % 3]:
-                    fbytes = drive.download_file(f['name'], pl_folder_id)
-                    if fbytes:
-                        st.download_button(
-                            f'⬇ {f["name"]}', data=fbytes, file_name=f['name'],
-                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                            key=f'browser_pl_{f["name"]}', use_container_width=True,
-                        )
+            for f in pl_files:
+                _file_row(f, pl_folder_id, xlsx_mime, 'pl')
 
         if pptx_files:
             st.markdown('**PowerPoints mis à jour**')
-            cols = st.columns(min(len(pptx_files), 3))
-            for i, f in enumerate(pptx_files):
-                with cols[i % 3]:
-                    fbytes = drive.download_file(f['name'], pptx_folder_id)
-                    if fbytes:
-                        st.download_button(
-                            f'⬇ {f["name"]}', data=fbytes, file_name=f['name'],
-                            mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                            key=f'browser_pptx_{f["name"]}', use_container_width=True,
-                        )
+            for f in pptx_files:
+                _file_row(f, pptx_folder_id, pptx_mime, 'pptx')
 
 
 # ── Workflow complet ───────────────────────────────────────────────────────────

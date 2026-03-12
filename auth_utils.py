@@ -124,3 +124,25 @@ def reject_user(username: str) -> bool:
         return False
     save_pending(new_pending)
     return True
+
+
+def reset_password(username: str, new_password: str) -> tuple[bool, str]:
+    """Réinitialise le mot de passe d'un utilisateur existant."""
+    if len(new_password) < 6:
+        return False, 'Mot de passe trop court (6 caractères min).'
+    config = load_users()
+    if username not in config['credentials']['usernames']:
+        return False, 'Utilisateur introuvable.'
+    config['credentials']['usernames'][username]['password'] = hash_password(new_password)
+    save_users(config)
+    return True, f'Mot de passe de {username} réinitialisé.'
+
+
+def delete_user(username: str) -> bool:
+    """Supprime un compte utilisateur de users.yaml."""
+    config = load_users()
+    if username not in config['credentials']['usernames']:
+        return False
+    del config['credentials']['usernames'][username]
+    save_users(config)
+    return True

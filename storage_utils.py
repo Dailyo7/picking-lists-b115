@@ -49,6 +49,16 @@ def list_files(folder_id: str = None, pattern: str = None) -> list[dict]:
     return [{'id': str(f), 'name': f.name} for f in files]
 
 
+def delete_file(file_name: str, folder_id: str = None) -> bool:
+    """Supprime un fichier du dossier local. Retourne True si supprimé."""
+    folder = Path(folder_id) if folder_id else DATA_DIR
+    path = folder / file_name
+    if path.exists():
+        path.unlink()
+        return True
+    return False
+
+
 def get_service():
     """Compatibilité drive_utils — non utilisé sur VPS."""
     return None
