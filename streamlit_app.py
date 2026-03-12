@@ -15,7 +15,7 @@ import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
 
-import drive_utils as drive
+import storage_utils as drive
 
 # ── Config page ───────────────────────────────────────────────────────────────
 
@@ -143,10 +143,9 @@ def get_main_xlsx() -> bytes | None:
 
 
 def refresh_main_xlsx():
-    """Force le rechargement de main.xlsx depuis Drive."""
+    """Force le rechargement de main.xlsx."""
     for k in ['main_xlsx_bytes', 'main_xlsx_loaded_at']:
         st.session_state.pop(k, None)
-    drive.get_folder_id.clear()
 
 
 def get_stock_cache() -> pd.DataFrame | None:
@@ -547,8 +546,9 @@ def step_archive():
 
 
 def _do_archive():
-    folder_id = drive.get_folder_id()
-    pl_folder_id = drive.get_subfolder_id('picking_lists', folder_id)
+    import shutil
+
+    pl_folder_id = drive.get_subfolder_id('picking_lists')
     pl_files = drive.list_files(pl_folder_id, pattern='PL_')
     pl_files = [f for f in pl_files if f['name'].startswith('PL_') and f['name'].endswith('.xlsx')]
 
@@ -556,39 +556,31 @@ def _do_archive():
         st.info('Aucune picking list à archiver.')
         return
 
-    # Récupérer archive_index.json depuis Drive
     archive_index_bytes = drive.download_file('archive_index.json')
     archive_index = json.loads(archive_index_bytes.decode()) if archive_index_bytes else {'archives': [], 'next_number': 1}
     archive_num = archive_index.get('next_number', 1)
-    archive_name = f'archive_{archive_num:03d}_{datetime.now().strftime("%Y%m%d_%H%M")}'
+    archive_name = f'#{archive_num:04d}_{datetime.now().strftime("%Y-%m-%d")}'
 
-    # Créer le sous-dossier d'archive
-    archive_folder_id = drive.get_subfolder_id(archive_name, drive.get_subfolder_id('picking_lists_archive', folder_id))
-
-    service = drive.get_service()
+    # Créer le dossier d'archive et déplacer les fichiers
+    archive_folder_id = drive.get_subfolder_id(archive_name, drive.get_subfolder_id('picking_lists_archive'))
     archived_names = []
     for f in pl_files:
-        # Déplacer le fichier (changer le parent)
-        service.files().update(
-            fileId=f['id'],
-            addParents=archive_folder_id,
-            removeParents=pl_folder_id,
-            fields='id',
-        ).execute()
+        shutil.move(f['id'], str(Path(archive_folder_id) / f['name']))
         archived_names.append(f['name'])
 
     # Mettre à jour archive_index.json
     archive_index['archives'].insert(0, {
         'number': archive_num,
         'folder': archive_name,
-        'date': datetime.now().strftime('%d/%m/%Y à %H:%M'),
+        'date': datetime.now().strftime('%d/%m/%Y'),
+        'datetime': datetime.now().strftime('%d/%m/%Y à %H:%M'),
         'user': st.session_state.get('name', '?'),
         'files': archived_names,
+        'components': [],
     })
     archive_index['next_number'] = archive_num + 1
     drive.upload_file(json.dumps(archive_index, indent=2).encode(), 'archive_index.json')
 
-    # Vider la session
     st.session_state.pop('generated_picking_files', None)
     log(f'✅ {len(pl_files)} fichier(s) archivé(s) dans {archive_name}.')
     st.success(f'{len(pl_files)} fichier(s) archivé(s).')
