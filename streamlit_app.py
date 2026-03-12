@@ -160,9 +160,13 @@ def _make_authenticator():
     )
 
 
-# Rechargé à chaque rerun pour prendre en compte les nouveaux utilisateurs approuvés
-config        = load_auth()
-authenticator = _make_authenticator()
+# L'authenticator doit rester la MÊME instance sur tous les reruns pour que
+# le CookieManager fonctionne (logout, cookie validation).
+# On le stocke en session_state ; on le recrée uniquement si absent.
+config = load_auth()
+if '_authenticator' not in st.session_state:
+    st.session_state['_authenticator'] = _make_authenticator()
+authenticator = st.session_state['_authenticator']
 
 
 # ── Login + Registration ────────────────────────────────────────────────────────
@@ -236,12 +240,32 @@ def _show_register_form():
 # ── Admin panel ────────────────────────────────────────────────────────────────
 
 def _show_admin_panel():
+    # ── Comptes actifs ──────────────────────────────────────────────────────
+    st.markdown('**Comptes actifs**')
+    cfg = load_auth()
+    users = cfg['credentials']['usernames']
+    if users:
+        for uname, udata in users.items():
+            role = udata.get('role', 'user')
+            badge = '🔑' if role == 'admin' else '👤'
+            st.markdown(
+                f'<div class="admin-row">{badge} <strong>{uname}</strong> — {udata.get("name","?")}'
+                f'<span style="color:#888;font-size:0.72rem;float:right">{role}</span></div>',
+                unsafe_allow_html=True,
+            )
+        st.caption('Les mots de passe sont hashés (bcrypt) — non récupérables.')
+    else:
+        st.caption('Aucun compte.')
+
+    st.divider()
+
+    # ── Demandes en attente ─────────────────────────────────────────────────
     pending = auth_utils.load_pending()
+    st.markdown(f'**Demandes en attente ({len(pending)})**')
     if not pending:
-        st.caption('Aucune demande en attente.')
+        st.caption('Aucune demande.')
         return
 
-    st.markdown(f'**{len(pending)} demande(s) en attente**')
     for p in pending:
         st.markdown(
             f'<div class="admin-row"><strong>{p["username"]}</strong> — {p["name"]}'
@@ -252,6 +276,8 @@ def _show_admin_panel():
         with c1:
             if st.button('✅ Approuver', key=f'approve_{p["username"]}', use_container_width=True):
                 if auth_utils.approve_user(p['username']):
+                    # Forcer le rechargement de l'authenticator avec les nouveaux comptes
+                    st.session_state.pop('_authenticator', None)
                     st.success(f'{p["username"]} approuvé.')
                     st.rerun()
         with c2:
@@ -958,6 +984,49 @@ def _do_sync_bom(dry_run=False):
         st.rerun()
 
 
+# ── Navigateur de fichiers ─────────────────────────────────────────────────────
+
+def step_files_browser():
+    """Affiche les fichiers générés disponibles sur le serveur."""
+    pl_folder_id   = drive.get_subfolder_id('picking_lists')
+    pptx_folder_id = drive.get_subfolder_id('powerpoints_updated')
+    pl_files   = drive.list_files(pl_folder_id,   pattern='PL_')
+    pptx_files = drive.list_files(pptx_folder_id, pattern='PW_')
+    total = len(pl_files) + len(pptx_files)
+    label = f'📁 Fichiers disponibles  ·  {total} fichier(s)' if total else '📁 Fichiers disponibles  ·  aucun'
+
+    with st.expander(label, expanded=False):
+        if not pl_files and not pptx_files:
+            st.caption('Aucun fichier généré pour l\'instant.')
+            return
+
+        if pl_files:
+            st.markdown('**Picking Lists**')
+            cols = st.columns(min(len(pl_files), 3))
+            for i, f in enumerate(pl_files):
+                with cols[i % 3]:
+                    fbytes = drive.download_file(f['name'], pl_folder_id)
+                    if fbytes:
+                        st.download_button(
+                            f'⬇ {f["name"]}', data=fbytes, file_name=f['name'],
+                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            key=f'browser_pl_{f["name"]}', use_container_width=True,
+                        )
+
+        if pptx_files:
+            st.markdown('**PowerPoints mis à jour**')
+            cols = st.columns(min(len(pptx_files), 3))
+            for i, f in enumerate(pptx_files):
+                with cols[i % 3]:
+                    fbytes = drive.download_file(f['name'], pptx_folder_id)
+                    if fbytes:
+                        st.download_button(
+                            f'⬇ {f["name"]}', data=fbytes, file_name=f['name'],
+                            mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                            key=f'browser_pptx_{f["name"]}', use_container_width=True,
+                        )
+
+
 # ── Workflow complet ───────────────────────────────────────────────────────────
 
 def tab_workflow():
@@ -997,7 +1066,7 @@ def tab_workflow():
     step_import_sap()
     step_generate_picking()
     step_update_pptx()
-    step_archive()
+    step_files_browser()
 
 
 # ── Page principale ────────────────────────────────────────────────────────────
@@ -1009,16 +1078,29 @@ def main_app():
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
         st.markdown(f'<div class="sidebar-user">👤 {user}</div>', unsafe_allow_html=True)
-        authenticator.logout('Déconnexion', 'sidebar', key='logout')
+
+        # Déconnexion — bouton manuel pour contourner les bugs de cookie
+        if st.button('Déconnexion', key='logout_btn', use_container_width=True):
+            try:
+                authenticator.logout('', 'unrendered')
+            except Exception:
+                pass
+            _reset_session()
+            st.session_state.pop('_authenticator', None)
+            st.rerun()
+
         st.divider()
 
         loaded_at = st.session_state.get('main_xlsx_loaded_at', '')
         if loaded_at:
-            st.markdown(f'<span class="badge badge-ok">main.xlsx</span> chargé {loaded_at}',
+            st.markdown(f'<span class="badge badge-ok">Stock</span> importé le {loaded_at}',
                         unsafe_allow_html=True)
         else:
-            st.markdown('<span class="badge badge-warn">main.xlsx</span> non chargé',
-                        unsafe_allow_html=True)
+            st.markdown(
+                '<span class="badge badge-warn">Stock</span> '
+                '<span style="font-size:0.8rem">pas encore importé</span>',
+                unsafe_allow_html=True,
+            )
 
         has_cache = drive.download_file('stock_cache.xlsx') is not None
         if has_cache:
@@ -1039,10 +1121,12 @@ def main_app():
         st.caption(VERSION)
         st.divider()
 
-        st.markdown('**📋 Journal**')
+        # Journal — uniquement les lignes de résumé (✅ ❌ ⚠️)
+        st.markdown('**Activité récente**')
         lines = st.session_state.get('log_lines', [])
-        if lines:
-            content = '\n'.join(lines[-60:])
+        summary = [l for l in lines if any(c in l for c in ('✅', '❌', '⚠️'))]
+        if summary:
+            content = '\n'.join(summary[-15:])
             st.markdown(f'<div class="log-box">{content}</div>', unsafe_allow_html=True)
             if st.button('🗑 Effacer', key='clear_log'):
                 st.session_state['log_lines'] = []
