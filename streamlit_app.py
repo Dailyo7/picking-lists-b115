@@ -774,6 +774,7 @@ def tab_adhoc():
         main_bytes = get_main_xlsx()
         all_refs, ref_desc_map = [], {}
         if main_bytes:
+            # 1. Références des onglets BOM (avec description)
             try:
                 for sheet in COMPONENTS:
                     df = pd.read_excel(io.BytesIO(main_bytes), sheet_name=sheet, header=0)
@@ -783,6 +784,19 @@ def tab_adhoc():
                             desc = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ''
                             if desc and desc != 'nan':
                                 ref_desc_map[ref] = desc
+                            all_refs.append(ref)
+            except Exception:
+                pass
+            # 2. Références du Stock SAP (celles absentes des BOM)
+            try:
+                stock_sheet = pd.read_excel(
+                    io.BytesIO(main_bytes), sheet_name='Stock',
+                    dtype={'Handling Unit': str, 'Product': str},
+                )
+                if 'Product' in stock_sheet.columns:
+                    for ref in stock_sheet['Product'].dropna().unique():
+                        ref = str(ref).strip()
+                        if ref and ref != 'nan' and ref not in all_refs:
                             all_refs.append(ref)
             except Exception:
                 pass
@@ -804,7 +818,7 @@ def tab_adhoc():
             with c3:
                 add_btn = st.form_submit_button('+ Ajouter', use_container_width=True)
             if add_btn and ref_input:
-                pure = ref_input.split('  —  ')[0].strip().upper()
+                pure = ref_input.split('  —  ')[0].strip()
                 st.session_state['adhoc_items'].append(
                     {'reference': pure, 'quantity': qty_input, 'unit': unit_input})
 
