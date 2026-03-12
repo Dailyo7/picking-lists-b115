@@ -16,6 +16,7 @@ import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
 
+import auth_utils
 import storage_utils as drive
 
 # ── Config page ────────────────────────────────────────────────────────────────
@@ -27,44 +28,117 @@ st.set_page_config(
     initial_sidebar_state='expanded',
 )
 
-VERSION = 'v3.6-web'
+VERSION = 'v3.7-web'
 COMPONENTS = ['Blade', 'Blade service', 'PCW', 'Upper', 'Lower', 'WEB']
 
 # ── CSS ────────────────────────────────────────────────────────────────────────
 
 st.markdown("""
 <style>
+/* Reset Streamlit rounding */
+div[data-testid="stButton"] button,
+div[data-testid="stDownloadButton"] button,
+div[data-testid="stForm"],
+div[data-testid="stExpander"],
+div[data-testid="stAlert"],
+div[data-testid="stMetric"],
+.stTextInput input, .stSelectbox select, .stNumberInput input {
+    border-radius: 2px !important;
+}
+
+/* Compact buttons */
+div[data-testid="stButton"] button {
+    padding: 0.3rem 0.8rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+/* Primary button — teal */
+div[data-testid="stButton"] button[kind="primary"] {
+    background: #00B4B4;
+    border: none;
+    color: #fff;
+}
+div[data-testid="stButton"] button[kind="primary"]:hover {
+    background: #009898;
+}
+
+/* Header */
 .sg-header {
     background: #2B2660;
-    padding: 1rem 1.5rem;
-    margin: -1rem -1rem 1.5rem -1rem;
+    padding: 0.75rem 1.25rem;
+    margin: -1rem -1rem 1.25rem -1rem;
     border-bottom: 3px solid #00B4B4;
 }
-.sg-header h2 { color: white; margin: 0 0 2px 0; font-size: 1.4rem; }
-.sg-header p  { color: #B8ADDE; margin: 0; font-size: 0.82rem; }
+.sg-header h2 { color: #fff; margin: 0 0 2px 0; font-size: 1.3rem; letter-spacing: -0.01em; }
+.sg-header p  { color: #B8ADDE; margin: 0; font-size: 0.78rem; }
 .sg-teal      { color: #00B4B4; }
 
+/* Status badges */
+.badge {
+    display: inline-block;
+    padding: 0.12rem 0.5rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.badge-ok   { background: #00B4B4; color: #fff; }
+.badge-warn { background: #F5A623; color: #fff; }
+.badge-err  { background: #D0021B; color: #fff; }
+
+/* Log box */
 .log-box {
-    background: #1A1840;
-    color: #E8E0F8;
-    font-family: monospace;
-    font-size: 0.78rem;
-    padding: 0.7rem 0.9rem;
-    border-radius: 6px;
-    max-height: 280px;
+    background: #14122a;
+    color: #c8c0e8;
+    font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+    font-size: 0.74rem;
+    padding: 0.6rem 0.8rem;
+    border-left: 3px solid #2B2660;
+    max-height: 260px;
     overflow-y: auto;
     white-space: pre-wrap;
-    line-height: 1.5;
+    line-height: 1.55;
 }
 
-/* Tabs */
+/* Tabs — compact */
 div[data-testid="stTabs"] button[data-baseweb="tab"] {
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 0.4rem 0.9rem;
+}
+
+/* Expanders */
+details summary {
     font-weight: 600;
     font-size: 0.9rem;
 }
 
-/* Expanders */
-details summary { font-weight: 600; }
+/* Login card */
+.login-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-top: 3px solid #2B2660;
+    padding: 2rem;
+    margin: 0 auto;
+}
+
+/* Admin panel */
+.admin-row {
+    background: #f8f7ff;
+    border-left: 3px solid #00B4B4;
+    padding: 0.4rem 0.7rem;
+    margin-bottom: 0.4rem;
+    font-size: 0.82rem;
+}
+
+/* Sidebar user name */
+.sidebar-user {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #2B2660;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -84,23 +158,78 @@ authenticator = stauth.Authenticate(
 )
 
 
-# ── Login ──────────────────────────────────────────────────────────────────────
+# ── Login + Registration ────────────────────────────────────────────────────────
 
 def show_login():
-    col1, col2, col3 = st.columns([1, 1.2, 1])
+    col1, col2, col3 = st.columns([1, 1.1, 1])
     with col2:
         st.markdown("""
-        <div style='text-align:center;padding:2rem 0 1.5rem 0'>
-            <div style='font-size:2.8rem'>📋</div>
-            <h2 style='color:#2B2660;margin:0.4rem 0 0 0'>Blade B115</h2>
-            <p style='color:#888;font-size:0.9rem;margin-top:4px'>Picking Lists Generator</p>
+        <div style='text-align:center;padding:1.5rem 0 1.2rem 0'>
+            <div style='font-size:2.4rem'>📋</div>
+            <h2 style='color:#2B2660;margin:0.3rem 0 0 0;letter-spacing:-0.02em'>Blade B115</h2>
+            <p style='color:#888;font-size:0.82rem;margin-top:3px'>Picking Lists Generator</p>
         </div>
         """, unsafe_allow_html=True)
-        authenticator.login(location='main')
-        if st.session_state.get('authentication_status') is False:
-            st.error('Identifiant ou mot de passe incorrect.')
-        elif st.session_state.get('authentication_status') is None:
-            st.info('Veuillez vous connecter.')
+
+        login_tab, register_tab = st.tabs(['Connexion', 'Créer un compte'])
+
+        with login_tab:
+            authenticator.login(location='main')
+            if st.session_state.get('authentication_status') is False:
+                st.error('Identifiant ou mot de passe incorrect.')
+            elif st.session_state.get('authentication_status') is None:
+                pass  # no banner, keeps it clean
+
+        with register_tab:
+            _show_register_form()
+
+
+def _show_register_form():
+    with st.form('register_form', clear_on_submit=True):
+        st.markdown('**Demander un accès**')
+        username = st.text_input('Identifiant', placeholder='lettres et chiffres, min 3 caractères')
+        name     = st.text_input('Nom complet', placeholder='ex: Jean Dupont')
+        pwd      = st.text_input('Mot de passe', type='password', placeholder='min 6 caractères')
+        pwd2     = st.text_input('Confirmer le mot de passe', type='password')
+        submitted = st.form_submit_button('Envoyer la demande', use_container_width=True)
+
+    if submitted:
+        if pwd != pwd2:
+            st.error('Les mots de passe ne correspondent pas.')
+        else:
+            ok, msg = auth_utils.register_user(username, name, pwd)
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
+
+
+# ── Admin panel ────────────────────────────────────────────────────────────────
+
+def _show_admin_panel():
+    pending = auth_utils.load_pending()
+    if not pending:
+        st.caption('Aucune demande en attente.')
+        return
+
+    st.markdown(f'**{len(pending)} demande(s) en attente**')
+    for p in pending:
+        st.markdown(
+            f'<div class="admin-row"><strong>{p["username"]}</strong> — {p["name"]}'
+            f'<br><span style="color:#888;font-size:0.75rem">{p.get("requested_at","")}</span></div>',
+            unsafe_allow_html=True,
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button('✅ Approuver', key=f'approve_{p["username"]}', use_container_width=True):
+                if auth_utils.approve_user(p['username']):
+                    st.success(f'{p["username"]} approuvé.')
+                    st.rerun()
+        with c2:
+            if st.button('❌ Rejeter', key=f'reject_{p["username"]}', use_container_width=True):
+                if auth_utils.reject_user(p['username']):
+                    st.warning(f'{p["username"]} rejeté.')
+                    st.rerun()
 
 
 # ── Helpers data ───────────────────────────────────────────────────────────────
@@ -424,7 +553,6 @@ def _do_update_pptx(print_pdf=False, *, _rerun=True):
         po_numbers = json.loads(po_bytes.decode()) if po_bytes else {}
 
         (tmpdir / 'picking_lists').mkdir(exist_ok=True)
-        # Copier les picking lists générées dans le tmpdir
         pl_folder_id = drive.get_subfolder_id('picking_lists')
         for f in drive.list_files(pl_folder_id, pattern='PL_'):
             fbytes = drive.download_file(f['name'], pl_folder_id)
@@ -804,7 +932,6 @@ def _do_sync_bom(dry_run=False):
 # ── Workflow complet ───────────────────────────────────────────────────────────
 
 def tab_workflow():
-    # Workflow complet
     with st.container():
         st.markdown('#### ▶ Workflow complet')
         st.caption('Enchaîne Import SAP → Picking Lists → PowerPoints en une seule action')
@@ -834,12 +961,9 @@ def tab_workflow():
                         else:
                             st.session_state['show_wf_config'] = False
                             _do_import_sap(sap_file)
-                            # Note : _do_import_sap appelle st.rerun()
-                            # Les étapes suivantes se poursuivront manuellement
 
     st.divider()
 
-    # Étapes individuelles
     st.markdown('#### Étapes individuelles')
     step_import_sap()
     step_generate_picking()
@@ -850,31 +974,42 @@ def tab_workflow():
 # ── Page principale ────────────────────────────────────────────────────────────
 
 def main_app():
-    user      = st.session_state.get('name', '')
-    loaded_at = st.session_state.get('main_xlsx_loaded_at', '')
+    user     = st.session_state.get('name', '')
+    username = st.session_state.get('username', '')
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
-        st.markdown(f'### 👤 {user}')
+        st.markdown(f'<div class="sidebar-user">👤 {user}</div>', unsafe_allow_html=True)
         authenticator.logout('Déconnexion', 'sidebar', key='logout')
         st.divider()
 
+        loaded_at = st.session_state.get('main_xlsx_loaded_at', '')
         if loaded_at:
-            st.success(f'main.xlsx chargé\n{loaded_at}')
+            st.markdown(f'<span class="badge badge-ok">main.xlsx</span> chargé {loaded_at}',
+                        unsafe_allow_html=True)
         else:
-            st.warning('main.xlsx non chargé')
+            st.markdown('<span class="badge badge-warn">main.xlsx</span> non chargé',
+                        unsafe_allow_html=True)
 
         has_cache = drive.download_file('stock_cache.xlsx') is not None
         if has_cache:
-            st.success('Cache stock disponible')
+            st.markdown('<span class="badge badge-ok">Cache stock</span> disponible',
+                        unsafe_allow_html=True)
         else:
-            st.info('Pas de cache stock')
+            st.markdown('<span class="badge badge-warn">Cache stock</span> absent',
+                        unsafe_allow_html=True)
 
         st.divider()
+
+        # Admin panel — visible uniquement pour l'admin
+        if auth_utils.is_admin(username):
+            with st.expander('🔑 Gestion des accès', expanded=False):
+                _show_admin_panel()
+            st.divider()
+
         st.caption(VERSION)
         st.divider()
 
-        # Journal dans la sidebar
         st.markdown('**📋 Journal**')
         lines = st.session_state.get('log_lines', [])
         if lines:
@@ -892,7 +1027,7 @@ def main_app():
         <h2>📋 Gestion des Picking Lists &nbsp;
             <span class="sg-teal">BLADE B115</span>
         </h2>
-        <p>{VERSION} &nbsp;·&nbsp; Connecté : {user}</p>
+        <p>{VERSION} &nbsp;·&nbsp; {user}</p>
     </div>
     """, unsafe_allow_html=True)
 
