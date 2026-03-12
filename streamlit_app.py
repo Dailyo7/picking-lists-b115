@@ -825,25 +825,30 @@ def tab_adhoc():
         items = st.session_state['adhoc_items']
         if items:
             st.dataframe(pd.DataFrame(items), hide_index=True, use_container_width=True)
-            c1, c2 = st.columns(2)
+            has_pdf = _libreoffice_available()
+            c1, c2, c3 = st.columns([2, 2, 2])
             with c1:
                 if st.button('🗑 Vider la liste', key='adhoc_clear', use_container_width=True):
                     st.session_state['adhoc_items'] = []
                     st.rerun()
             with c2:
+                print_pdf = has_pdf and st.checkbox(
+                    '🖨 Générer en PDF', key='adhoc_pdf',
+                    help='Génère aussi un PDF prêt à imprimer')
+            with c3:
                 if st.button('▶ Générer', key='adhoc_gen', type='primary', use_container_width=True):
-                    _do_adhoc_picking(list(items))
+                    _do_adhoc_picking(list(items), print_pdf=print_pdf)
         else:
             st.caption('_Aucun article — ajoutez une référence ci-dessus._')
 
         if 'adhoc_result' in st.session_state:
-            fname, fbytes = st.session_state['adhoc_result']
+            result_files = st.session_state['adhoc_result']
             st.success('Picking list générée.')
-            st.download_button(
-                f'⬇ Télécharger {fname}', data=fbytes, file_name=fname,
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                key='dl_adhoc', use_container_width=True,
-            )
+            for fname, fbytes, mime in result_files:
+                st.download_button(
+                    f'⬇ {fname}', data=fbytes, file_name=fname, mime=mime,
+                    key=f'dl_adhoc_{fname}', use_container_width=True,
+                )
 
     with col_right:
         st.markdown('#### 🔍 Consulter le stock')
@@ -870,7 +875,7 @@ def tab_adhoc():
                         st.metric('Quantité totale', f'{result["Quantity"].sum():g}')
 
 
-def _do_adhoc_picking(items):
+def _do_adhoc_picking(items, print_pdf=False):
     import picking_list_generator as plg_mod
     import sys
 
@@ -910,8 +915,11 @@ def _do_adhoc_picking(items):
             log(line)
 
         if filename and Path(filename).exists():
-            fbytes = Path(filename).read_bytes()
-            fname  = Path(filename).name
+            xlsx_path = Path(filename)
+            fbytes    = xlsx_path.read_bytes()
+            fname     = xlsx_path.name
+            xlsx_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
             pl_folder_id = drive.get_subfolder_id('picking_lists')
             drive.upload_file(fbytes, fname, pl_folder_id)
             drive.upload_file(main_path.read_bytes(), 'main.xlsx')
@@ -921,7 +929,14 @@ def _do_adhoc_picking(items):
             cache_path = tmpdir / 'stock_cache.xlsx'
             if cache_path.exists():
                 drive.upload_file(cache_path.read_bytes(), 'stock_cache.xlsx')
-            st.session_state['adhoc_result'] = (fname, fbytes)
+
+            result_files = [(fname, fbytes, xlsx_mime)]
+            if print_pdf:
+                pdf_path = _file_to_pdf(xlsx_path)
+                if pdf_path:
+                    result_files.append((pdf_path.name, pdf_path.read_bytes(), 'application/pdf'))
+
+            st.session_state['adhoc_result'] = result_files
             st.session_state['adhoc_items'] = []
             refresh_main_xlsx()
             log(f'✅ Ad-hoc généré : {fname}')
