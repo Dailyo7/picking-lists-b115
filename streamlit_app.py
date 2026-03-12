@@ -426,11 +426,20 @@ class _Capture:
 
 # ── Import SAP ─────────────────────────────────────────────────────────────────
 
-def step_import_sap():
-    loaded_at = st.session_state.get('main_xlsx_loaded_at', '')
-    hint = f'main.xlsx chargé le {loaded_at}' if loaded_at else '⚠️ main.xlsx non chargé'
+def _get_last_import() -> dict:
+    """Lit les infos du dernier import depuis le serveur (partagé entre tous les comptes)."""
+    data = drive.download_file('last_import.json')
+    return json.loads(data.decode()) if data else {}
 
-    with st.expander(f'📥 Import Stock SAP  ·  {hint}', expanded=True):
+
+def step_import_sap():
+    last = _get_last_import()
+    if last:
+        hint = f'dernière MAJ le {last.get("date","?")} par {last.get("user","?")}'
+    else:
+        hint = '⚠️ aucun import effectué'
+
+    with st.expander(f'📥 Import Stock SAP  ·  {hint}', expanded=False):
         uploaded = st.file_uploader(
             'Sélectionner l\'export SAP (.xlsx / .xls)',
             type=['xlsx', 'xls'], key='sap_upload',
@@ -494,8 +503,14 @@ def step_generate_picking():
     has_pdf = _libreoffice_available()
     with st.expander('📋 Générer les Picking Lists', expanded=False):
         selected, po_numbers = _component_selector('picking')
-        print_pdf = has_pdf and st.checkbox(
-            '🖨 Générer aussi en PDF (impression directe)', key='picking_pdf')
+        opt_col1, opt_col2 = st.columns(2)
+        with opt_col1:
+            print_pdf = has_pdf and st.checkbox(
+                '🖨 Générer en PDF', key='picking_pdf')
+        with opt_col2:
+            include_pptx = st.checkbox(
+                '📊 Inclure les PowerPoints mis à jour', key='picking_include_pptx',
+                help='Télécharger les .pptx mis à jour en même temps que les picking lists')
         c1, c2 = st.columns([3, 1])
         with c2:
             if st.button('▶ Générer', key='btn_picking', type='primary', use_container_width=True):
@@ -504,9 +519,13 @@ def step_generate_picking():
                 else:
                     ok = _do_generate_picking(selected, po_numbers, print_pdf, _rerun=False)
                     if ok:
-                        _do_update_pptx(print_pdf, _rerun=True)
-                    else:
-                        st.rerun()
+                        ok2 = _do_update_pptx(print_pdf, _rerun=False)
+                        if ok2 and include_pptx:
+                            # Fusionner les pptx dans les fichiers à télécharger
+                            merged = dict(st.session_state.get('generated_picking_files', {}))
+                            merged.update(st.session_state.get('generated_pptx_files', {}))
+                            st.session_state['generated_picking_files'] = merged
+                    st.rerun()
         if 'generated_picking_files' in st.session_state:
             st.divider()
             st.markdown('**Fichiers générés**')
@@ -1036,10 +1055,25 @@ def step_files_browser():
         xlsx_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         pptx_mime = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
+        # Sélection pour suppression multiple
+        sel_key = 'browser_selected'
+        if sel_key not in st.session_state:
+            st.session_state[sel_key] = set()
+        selected_files = st.session_state[sel_key]
+
         def _file_row(f, folder_id, mime, key_prefix):
             fbytes = drive.download_file(f['name'], folder_id)
-            c1, c2 = st.columns([5, 1])
-            with c1:
+            c_chk, c_dl = st.columns([1, 8])
+            with c_chk:
+                checked = st.checkbox('', key=f'{key_prefix}_chk_{f["name"]}',
+                                      value=f['name'] in selected_files,
+                                      label_visibility='collapsed')
+                file_id = f'{folder_id}::{f["name"]}'
+                if checked:
+                    selected_files.add(file_id)
+                else:
+                    selected_files.discard(file_id)
+            with c_dl:
                 if fbytes:
                     st.download_button(
                         f'⬇ {f["name"]}', data=fbytes, file_name=f['name'], mime=mime,
@@ -1047,19 +1081,6 @@ def step_files_browser():
                     )
                 else:
                     st.caption(f['name'])
-            with c2:
-                arm = f'arm_del_file_{f["name"]}'
-                if st.session_state.get(arm):
-                    if st.button('✓', key=f'{key_prefix}_ok_{f["name"]}',
-                                 help='Confirmer la suppression', use_container_width=True):
-                        drive.delete_file(f['name'], folder_id)
-                        st.session_state.pop(arm, None)
-                        st.rerun()
-                else:
-                    if st.button('🗑', key=f'{key_prefix}_del_{f["name"]}',
-                                 help='Supprimer', use_container_width=True):
-                        st.session_state[arm] = True
-                        st.rerun()
 
         if pl_files:
             st.markdown('**Picking Lists**')
@@ -1070,6 +1091,20 @@ def step_files_browser():
             st.markdown('**PowerPoints mis à jour**')
             for f in pptx_files:
                 _file_row(f, pptx_folder_id, pptx_mime, 'pptx')
+
+        # Bouton suppression groupée
+        n_sel = len(selected_files)
+        if n_sel:
+            st.divider()
+            c1, c2 = st.columns([3, 2])
+            with c2:
+                if st.button(f'🗑 Supprimer {n_sel} fichier(s) sélectionné(s)',
+                             type='primary', use_container_width=True, key='bulk_delete'):
+                    for file_id in list(selected_files):
+                        folder_id_part, fname = file_id.split('::', 1)
+                        drive.delete_file(fname, folder_id_part)
+                    st.session_state[sel_key] = set()
+                    st.rerun()
 
 
 # ── Workflow complet ───────────────────────────────────────────────────────────
@@ -1136,14 +1171,17 @@ def main_app():
 
         st.divider()
 
-        loaded_at = st.session_state.get('main_xlsx_loaded_at', '')
-        if loaded_at:
-            st.markdown(f'<span class="badge badge-ok">Stock</span> importé le {loaded_at}',
-                        unsafe_allow_html=True)
+        last = _get_last_import()
+        if last:
+            st.markdown(
+                f'<span class="badge badge-ok">Stock</span> '
+                f'<span style="font-size:0.78rem">{last.get("date","?")} · {last.get("user","?")}</span>',
+                unsafe_allow_html=True,
+            )
         else:
             st.markdown(
                 '<span class="badge badge-warn">Stock</span> '
-                '<span style="font-size:0.8rem">pas encore importé</span>',
+                '<span style="font-size:0.8rem">aucun import</span>',
                 unsafe_allow_html=True,
             )
 
