@@ -149,16 +149,30 @@ def load_auth():
     with open('users.yaml') as f:
         return yaml.load(f, Loader=SafeLoader)
 
-config = load_auth()
-authenticator = stauth.Authenticate(
-    config['credentials'],
-    config['cookie']['name'],
-    config['cookie']['key'],
-    config['cookie']['expiry_days'],
-)
+
+def _make_authenticator():
+    cfg = load_auth()
+    return stauth.Authenticate(
+        cfg['credentials'],
+        cfg['cookie']['name'],
+        cfg['cookie']['key'],
+        cfg['cookie']['expiry_days'],
+    )
+
+
+# Rechargé à chaque rerun pour prendre en compte les nouveaux utilisateurs approuvés
+config        = load_auth()
+authenticator = _make_authenticator()
 
 
 # ── Login + Registration ────────────────────────────────────────────────────────
+
+def _reset_session():
+    """Efface toutes les clés de session liées à l'authentification."""
+    for k in ['authentication_status', 'name', 'username',
+              'main_xlsx_bytes', 'main_xlsx_loaded_at', 'log_lines']:
+        st.session_state.pop(k, None)
+
 
 def show_login():
     col1, col2, col3 = st.columns([1, 1.1, 1])
@@ -174,11 +188,26 @@ def show_login():
         login_tab, register_tab = st.tabs(['Connexion', 'Créer un compte'])
 
         with login_tab:
-            authenticator.login(location='main')
-            if st.session_state.get('authentication_status') is False:
+            try:
+                authenticator.login(location='main')
+            except Exception:
+                _reset_session()
+                st.rerun()
+
+            status = st.session_state.get('authentication_status')
+            if status is False:
                 st.error('Identifiant ou mot de passe incorrect.')
-            elif st.session_state.get('authentication_status') is None:
-                pass  # no banner, keeps it clean
+            elif status is True:
+                # Connecté via le formulaire → rerun pour passer à main_app
+                st.rerun()
+
+            # Bouton reset discret en cas de page blanche / cookie bloquant
+            st.markdown('<br>', unsafe_allow_html=True)
+            if st.button('Problème de connexion ? Réinitialiser la session',
+                         key='reset_session',
+                         help='Efface les cookies et la session locale'):
+                _reset_session()
+                st.rerun()
 
         with register_tab:
             _show_register_form()
@@ -1050,7 +1079,14 @@ def main_app():
 
 # ── Point d'entrée ─────────────────────────────────────────────────────────────
 
-if st.session_state.get('authentication_status'):
+_status = st.session_state.get('authentication_status')
+_name   = st.session_state.get('name')
+
+if _status is True and _name:
     main_app()
+elif _status is True and not _name:
+    # Cookie présent mais session incohérente (ex: redémarrage serveur)
+    _reset_session()
+    st.rerun()
 else:
     show_login()
